@@ -3,128 +3,186 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trends Video Pipeline</title>
+  <title>Trends Video Library</title>
   <link rel="stylesheet" href="/static/style.css">
   {% if has_running %}
-  <meta http-equiv="refresh" content="30">
+  <meta http-equiv="refresh" content="15">
   {% endif %}
 </head>
 <body>
-  <header>
-    <h1>Trends Video Pipeline</h1>
-    <p class="subtitle">Daily Google Trends → Narrated Video → YouTube</p>
+  <header class="site-header">
+    <div>
+      <h1>Trends Video Library</h1>
+      <p class="subtitle">Daily Google Trends → Narrated Video (local)</p>
+    </div>
+    <div class="header-actions">
+      <label class="toggle">
+        <input type="checkbox" id="mock-toggle">
+        <span>Mock data</span>
+      </label>
+    </div>
   </header>
 
   <section class="cards">
     <div class="card">
-      <div class="card-value">{{ stats.today_total }}</div>
-      <div class="card-label">Runs Today</div>
-    </div>
-    <div class="card success">
       <div class="card-value">{{ stats.today_success }}</div>
-      <div class="card-label">Successful</div>
-    </div>
-    <div class="card danger">
-      <div class="card-value">{{ stats.today_failed }}</div>
-      <div class="card-label">Failed</div>
+      <div class="card-label">Videos today</div>
     </div>
     <div class="card warning">
       <div class="card-value">{{ stats.running }}</div>
-      <div class="card-label">Running Now</div>
+      <div class="card-label">Running</div>
+    </div>
+    <div class="card danger">
+      <div class="card-value">{{ stats.today_failed }}</div>
+      <div class="card-label">Failed today</div>
+    </div>
+    <div class="card">
+      <div class="card-value">{{ available_dates|length }}</div>
+      <div class="card-label">Dates stored</div>
     </div>
   </section>
 
-  <section class="panel">
-    <h2>Trigger Manual Run</h2>
+  <section class="panel generate-panel">
+    <div class="panel-head">
+      <h2>Generate video</h2>
+      <p class="hint">Creates a local MP4 under <code>output/</code>. Upload to YouTube manually.</p>
+    </div>
     <div class="trigger-row">
       {% for country in countries %}
-      <button class="btn" onclick="triggerRun('{{ country.code }}', false)">
-        Run {{ country.code }}
-      </button>
-      <button class="btn btn-secondary" onclick="triggerRun('{{ country.code }}', true)">
-        Mock {{ country.code }}
+      <button class="btn" onclick="triggerRun('{{ country.code }}')">
+        Generate {{ country.code }}
       </button>
       {% endfor %}
     </div>
     <p id="trigger-status" class="hint"></p>
   </section>
 
-  <section class="panel">
-    <h2>Next Scheduled Runs (9pm local)</h2>
+  <section class="panel filters-panel">
+    <form method="get" class="filters" id="filter-form">
+      <div class="filter-group">
+        <span class="filter-label">Country</span>
+        <div class="chips">
+          <a class="chip {% if not filter_country %}active{% endif %}"
+             href="/?{% if filter_date %}date={{ filter_date }}{% endif %}">All</a>
+          {% for country in countries %}
+          <a class="chip {% if filter_country == country.code %}active{% endif %}"
+             href="/?country={{ country.code }}{% if filter_date %}&date={{ filter_date }}{% endif %}">
+            {{ country.code }}
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label" for="date">Date</label>
+        <select name="date" id="date" onchange="this.form.submit()">
+          <option value="">All dates</option>
+          {% for d in available_dates %}
+          <option value="{{ d }}" {% if filter_date == d %}selected{% endif %}>{{ d }}</option>
+          {% endfor %}
+        </select>
+        {% if filter_country %}
+        <input type="hidden" name="country" value="{{ filter_country }}">
+        {% endif %}
+      </div>
+    </form>
+  </section>
+
+  {% if next_runs %}
+  <section class="panel schedule-panel">
+    <h2>Next scheduled (9pm local)</h2>
     <ul class="schedule-list">
       {% for item in next_runs %}
       <li><strong>{{ item.country_code }}</strong> — {{ item.next_run }}</li>
-      {% else %}
-      <li>Scheduler not active</li>
       {% endfor %}
     </ul>
   </section>
+  {% endif %}
 
-  <section class="panel">
-    <h2>Run History</h2>
-    <form method="get" class="filter-form">
-      <label>Filter by country:</label>
-      <select name="country" onchange="this.form.submit()">
-        <option value="">All</option>
-        {% for country in countries %}
-        <option value="{{ country.code }}" {% if filter_country == country.code %}selected{% endif %}>
-          {{ country.code }} — {{ country.name }}
-        </option>
-        {% endfor %}
-      </select>
-    </form>
-
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Date</th>
-          <th>Country</th>
-          <th>Status</th>
-          <th>Duration</th>
-          <th>YouTube</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for run in runs %}
-        <tr>
-          <td>{{ run.id }}</td>
-          <td>{{ run.run_date }}</td>
-          <td>{{ run.country_code }}</td>
-          <td><span class="badge badge-{{ run.status }}">{{ run.status }}</span></td>
-          <td>{{ run.duration }}</td>
-          <td>
-            {% if run.youtube_video_id and run.youtube_video_id != 'skipped' %}
-            <a href="https://youtube.com/watch?v={{ run.youtube_video_id }}" target="_blank">Watch</a>
-            {% else %}
-            —
+  <section class="library">
+    {% for group in groups %}
+    <div class="date-group">
+      <h2 class="date-heading">{{ group.date }}</h2>
+      <div class="video-grid">
+        {% for run in group.runs %}
+        <article class="video-card">
+          <div class="video-card-top">
+            <div>
+              <h3>{{ run.video_title }}</h3>
+              <p class="meta">{{ run.country_code }} · #{{ run.id }}</p>
+            </div>
+            <span class="badge badge-{{ run.display_status }}">{{ run.display_status }}</span>
+          </div>
+          <div class="video-meta">
+            <span>{{ run.trend_count }} trends</span>
+            <span>{{ run.duration }}</span>
+          </div>
+          {% if run.has_video %}
+          <video class="thumb-player" controls preload="metadata" src="/videos/{{ run.id }}/file"></video>
+          {% elif run.status == 'running' %}
+          <div class="placeholder">Generating…</div>
+          {% elif run.display_status == 'missing' %}
+          <div class="placeholder failed">File missing on disk — safe to Delete</div>
+          {% elif run.status == 'failed' %}
+          <div class="placeholder failed">Failed — see details</div>
+          {% else %}
+          <div class="placeholder">No video file</div>
+          {% endif %}
+          <div class="card-actions">
+            {% if run.has_video %}
+            <a class="btn btn-small" href="/videos/{{ run.id }}/file">Play</a>
+            <a class="btn btn-small btn-secondary" href="/videos/{{ run.id }}/download">Download</a>
             {% endif %}
-          </td>
-          <td><a href="/runs/{{ run.id }}">Details</a></td>
-        </tr>
-        {% else %}
-        <tr><td colspan="7">No runs yet. Trigger a manual run above.</td></tr>
+            <a class="btn btn-small btn-ghost" href="/runs/{{ run.id }}">Details</a>
+            {% if run.status != 'running' %}
+            <button type="button" class="btn btn-small btn-danger" onclick='deleteRun({{ run.id }}, {{ run.video_title|tojson }})'>Delete</button>
+            {% endif %}
+          </div>
+        </article>
         {% endfor %}
-      </tbody>
-    </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state panel">
+      <h2>No videos yet</h2>
+      <p>Generate one for US or IN above. Videos are stored locally under <code>output/YYYY-MM-DD/COUNTRY/</code>.</p>
+    </div>
+    {% endfor %}
   </section>
 
   <script>
-    async function triggerRun(code, mock) {
+    async function triggerRun(code) {
       const status = document.getElementById('trigger-status');
-      status.textContent = `Starting run for ${code}...`;
+      const mock = document.getElementById('mock-toggle').checked;
+      status.textContent = `Starting ${code}…`;
       try {
-        const res = await fetch(`/api/trigger/${code}?mock=${mock}&skip_upload=false`, { method: 'POST' });
+        const res = await fetch(`/api/trigger/${code}?mock=${mock}`, { method: 'POST' });
         const data = await res.json();
         if (res.ok) {
-          status.textContent = `Run ${data.run_id} started. Refreshing...`;
-          setTimeout(() => location.reload(), 2000);
+          status.textContent = `Run #${data.run_id} started. Refreshing…`;
+          setTimeout(() => location.reload(), 1500);
         } else {
           status.textContent = data.detail || 'Failed to start run';
         }
       } catch (e) {
         status.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    async function deleteRun(id, title) {
+      const label = title || ('run #' + id);
+      if (!confirm('Permanently delete "' + label + '" from disk and the dashboard? This cannot be undone.')) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/runs/' + id, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok) {
+          location.reload();
+        } else {
+          alert(data.detail || 'Delete failed');
+        }
+      } catch (e) {
+        alert('Error: ' + e.message);
       }
     }
   </script>

@@ -10,6 +10,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from src.config import Country, get_env, load_pipeline_config
+from src.naming import build_video_title
 from src.youtube.auth import get_credentials
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ def _build_description(
     run_date: str,
 ) -> str:
     lines = [
-        f"Top Google Trends in {country.name} — {run_date}",
+        build_video_title(country.name, run_date),
         "",
         "Trending searches:",
     ]
@@ -54,7 +55,7 @@ def upload_video(
     creds = get_credentials()
     youtube = build("youtube", "v3", credentials=creds)
 
-    title = f"Top Google Trends in {country.name} — {run_date}"
+    title = build_video_title(country.name, run_date)
     description = _build_description(country, trends, news, run_date)
     tags = list(country.youtube_tags) + ["google trends", "daily news"]
 
@@ -100,9 +101,14 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     country = get_country(args.country)
     out_dir = OUTPUT_DIR / args.date / country.code.upper()
-    video_path = out_dir / "final.mp4"
+    from src.naming import video_filename
+
+    video_path = out_dir / video_filename(country.name, args.date)
     if not video_path.exists():
-        raise FileNotFoundError(f"No video at {video_path}")
+        mp4s = list(out_dir.glob("*.mp4"))
+        if not mp4s:
+            raise FileNotFoundError(f"No video at {video_path}")
+        video_path = mp4s[0]
 
     import json
 

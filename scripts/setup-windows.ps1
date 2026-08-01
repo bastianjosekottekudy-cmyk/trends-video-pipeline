@@ -48,8 +48,7 @@ New-Item -ItemType Directory -Force -Path output | Out-Null
 Write-Host ""
 Write-Host "Setup complete!" -ForegroundColor Green
 Write-Host "Next steps:"
-Write-Host "  1. Place client_secrets.json in secrets/"
-Write-Host "  2. Run: .\.venv\Scripts\python.exe -m src.youtube.auth"
-Write-Host "  3. Add YOUTUBE_REFRESH_TOKEN to .env"
-Write-Host "  4. Start: .\scripts\run.ps1"
-Write-Host "  5. Open: http://127.0.0.1:8080"
+Write-Host "  1. Start: .\scripts\run.ps1"
+Write-Host "  2. Open: http://127.0.0.1:8080"
+Write-Host "  3. Generate a video (videos are stored locally under output/)"
+

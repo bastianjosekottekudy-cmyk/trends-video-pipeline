@@ -9,9 +9,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+import feedparser
+import httpx
+
 from src.config import Country, load_pipeline_config
 
 logger = logging.getLogger(__name__)
+
+TRENDING_RSS_URL = "https://trends.google.com/trending/rss"
 
 
 class TrendsProvider(abc.ABC):
@@ -20,36 +25,30 @@ class TrendsProvider(abc.ABC):
         raise NotImplementedError
 
 
-class PytrendsProvider(TrendsProvider):
-    """Fetch daily trending searches via pytrends."""
+class GoogleTrendsRssProvider(TrendsProvider):
+    """Fetch daily trends via Google Trends RSS (current public endpoint)."""
 
     def fetch(self, country: Country, limit: int) -> list[str]:
-        from pytrends.request import TrendReq
-
-        pytrends = TrendReq(hl="en-US", tz=360, retries=3, backoff_factor=0.5)
-        trends: list[str] = []
-
-        # Primary: daily trends for geo
+        geo = country.trends_geo or country.code
+        url = f"{TRENDING_RSS_URL}?geo={geo}"
         try:
-            df = pytrends.today_searches(pn=country.trends_geo)
-            if df is not None and not df.empty:
-                trends = [str(x).strip() for x in df.iloc[:, 0].tolist() if str(x).strip()]
+            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+                resp = client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp.raise_for_status()
+                feed = feedparser.parse(resp.text)
         except Exception as exc:
-            logger.warning("today_searches failed for %s: %s", country.code, exc)
+            raise RuntimeError(f"Trends RSS failed for {country.code}: {exc}") from exc
 
-        # Fallback: trending_searches by pn name
-        if not trends:
-            try:
-                df = pytrends.trending_searches(pn=country.trends_pn)
-                if df is not None and not df.empty:
-                    trends = [str(x).strip() for x in df.iloc[:, 0].tolist() if str(x).strip()]
-            except Exception as exc:
-                logger.warning("trending_searches failed for %s: %s", country.code, exc)
+        titles: list[str] = []
+        for entry in feed.entries:
+            title = str(getattr(entry, "title", "")).strip()
+            if title:
+                titles.append(title)
 
-        if not trends:
-            raise RuntimeError(f"Could not fetch trends for {country.code}")
+        if not titles:
+            raise RuntimeError(f"No trends returned for {country.code}")
 
-        return trends[:limit]
+        return titles[:limit]
 
 
 class MockTrendsProvider(TrendsProvider):
@@ -71,9 +70,12 @@ class MockTrendsProvider(TrendsProvider):
         return base[:limit]
 
 
-def get_trends_provider(name: str = "pytrends") -> TrendsProvider:
+def get_trends_provider(name: str = "http") -> TrendsProvider:
+    # "http" / "pytrends" both use RSS now — old pytrends endpoints return 404
     providers: dict[str, TrendsProvider] = {
-        "pytrends": PytrendsProvider(),
+        "http": GoogleTrendsRssProvider(),
+        "pytrends": GoogleTrendsRssProvider(),
+        "rss": GoogleTrendsRssProvider(),
         "mock": MockTrendsProvider(),
     }
     if name not in providers:
@@ -84,7 +86,7 @@ def get_trends_provider(name: str = "pytrends") -> TrendsProvider:
 def fetch_trends_with_retry(
     country: Country,
     output_dir: Path,
-    provider_name: str = "pytrends",
+    provider_name: str = "http",
     max_retries: int = 3,
 ) -> list[str]:
     config = load_pipeline_config()
@@ -97,7 +99,7 @@ def fetch_trends_with_retry(
             trends = provider.fetch(country, limit)
             payload: dict[str, Any] = {
                 "country": country.code,
-                "provider": provider_name,
+                "provider": provider_name if provider_name != "pytrends" else "rss",
                 "trends": trends,
             }
             out_path = output_dir / "trends.json"

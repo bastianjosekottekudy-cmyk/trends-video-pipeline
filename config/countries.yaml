@@ -25,3 +25,11 @@ countries:
     trends_pn: india
     language: en
     youtube_tags: [trends, news, india]
+
+  - code: GB
+    name: United Kingdom
+    timezone: Europe/London
+    trends_geo: GB
+    trends_pn: united_kingdom
+    language: en
+    youtube_tags: [trends, news, uk, united kingdom]

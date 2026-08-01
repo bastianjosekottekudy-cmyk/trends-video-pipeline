@@ -53,7 +53,17 @@ def get_env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
 
 
-def country_output_dir(country_code: str, run_date: str) -> Path:
+def country_output_dir(
+    country_code: str,
+    run_date: str,
+    run_id: int | None = None,
+) -> Path:
+    """
+    Per-run output folder so deletes never wipe another job's files.
+    layout: output/{date}/{COUNTRY}/run_{id}/
+    """
     path = OUTPUT_DIR / run_date / country_code.upper()
+    if run_id is not None:
+        path = path / f"run_{run_id}"
     path.mkdir(parents=True, exist_ok=True)
     return path

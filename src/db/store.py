@@ -109,20 +109,42 @@ def get_run(run_id: int) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
+def delete_run(run_id: int) -> bool:
+    """Remove run row from the database. Returns True if a row was deleted."""
+    with db() as conn:
+        cur = conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        return cur.rowcount > 0
+
+
 def list_runs(
     country_code: str | None = None,
-    limit: int = 100,
+    run_date: str | None = None,
+    limit: int = 200,
 ) -> list[dict[str, Any]]:
     query = "SELECT * FROM runs"
+    clauses: list[str] = []
     params: list[Any] = []
     if country_code:
-        query += " WHERE country_code = ?"
+        clauses.append("country_code = ?")
         params.append(country_code.upper())
-    query += " ORDER BY id DESC LIMIT ?"
+    if run_date:
+        clauses.append("run_date = ?")
+        params.append(run_date)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY run_date DESC, country_code ASC, id DESC LIMIT ?"
     params.append(limit)
     with db() as conn:
         rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
+
+
+def list_run_dates() -> list[str]:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT run_date FROM runs ORDER BY run_date DESC"
+        ).fetchall()
+        return [row[0] for row in rows]
 
 
 def count_runs_today() -> dict[str, int]:

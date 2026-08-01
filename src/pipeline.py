@@ -12,33 +12,41 @@ from typing import Any
 from src.audio.tts import generate_narration
 from src.config import country_output_dir, get_country, load_pipeline_config
 from src.db import store
+from src.images.fetcher import fetch_images_for_trends
+from src.naming import build_video_title
 from src.news.fetcher import fetch_news_for_trends
 from src.script.generator import generate_script
+from src.titles.clarity import generate_clear_titles
 from src.trends.fetcher import fetch_trends_with_retry
 from src.video.renderer import render_video
-from src.youtube.uploader import upload_video
 
 logger = logging.getLogger(__name__)
+
+
+def _youtube_enabled() -> bool:
+    config = load_pipeline_config()
+    return bool(config.get("youtube", {}).get("enabled", False))
 
 
 def run_country_pipeline(
     country_code: str,
     *,
     run_date: str | None = None,
-    trends_provider: str = "pytrends",
+    trends_provider: str = "http",
     news_provider: str = "google_news_rss",
-    skip_upload: bool = False,
+    skip_upload: bool = True,
+    force_upload: bool = False,
     existing_run_id: int | None = None,
 ) -> int:
     country = get_country(country_code)
     run_date = run_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    output_dir = country_output_dir(country.code, run_date)
 
     run_id = existing_run_id or store.create_run(country.code, country.name, run_date)
-    logger.info("Starting pipeline run %s for %s", run_id, country.code)
+    output_dir = country_output_dir(country.code, run_date, run_id=run_id)
+    logger.info("Starting pipeline run %s for %s → %s", run_id, country.code, output_dir)
 
     try:
-        store.append_step_log(run_id, "trends", "Fetching Google Trends")
+        store.append_step_log(run_id, "trends", "Fetching Google Trends (top 20)")
         trends = fetch_trends_with_retry(country, output_dir, provider_name=trends_provider)
         store.update_run(run_id, trends_json=json.dumps(trends))
 
@@ -46,34 +54,57 @@ def run_country_pipeline(
         news = fetch_news_for_trends(trends, country, output_dir, provider_name=news_provider)
         store.update_run(run_id, news_json=json.dumps(news))
 
-        store.append_step_log(run_id, "script", "Generating narration script")
+        store.append_step_log(run_id, "images", "Fetching related images")
+        images = fetch_images_for_trends(trends, news, country, output_dir)
+
+        store.append_step_log(run_id, "titles", "Writing clear on-screen titles")
+        display_titles = generate_clear_titles(country, trends, news, output_dir)
+
+        store.append_step_log(run_id, "script", "Generating witty narration")
         script_path = generate_script(country, trends, news, output_dir)
         store.update_run(run_id, script_path=script_path)
 
         store.append_step_log(run_id, "tts", "Generating voiceover")
-        audio_path = generate_narration(
-            Path(script_path), country, output_dir
-        )
+        audio_path = generate_narration(Path(script_path), country, output_dir)
 
-        store.append_step_log(run_id, "render", "Rendering video")
-        video_path = render_video(country, trends, news, audio_path, output_dir)
+        store.append_step_log(run_id, "render", "Rendering video with image slides")
+        video_title = build_video_title(country.name, run_date)
+        video_path = render_video(
+            country,
+            trends,
+            news,
+            audio_path,
+            output_dir,
+            run_date=run_date,
+            images=images,
+            display_titles=display_titles,
+        )
         store.update_run(run_id, video_path=video_path)
 
-        youtube_id = "skipped"
-        if not skip_upload:
+        youtube_id = None
+        should_upload = force_upload or (not skip_upload and _youtube_enabled())
+        if should_upload:
+            from src.youtube.uploader import upload_video
+
             store.append_step_log(run_id, "upload", "Uploading to YouTube")
             youtube_id = upload_video(video_path, country, trends, news, run_date)
             store.update_run(run_id, youtube_video_id=youtube_id)
         else:
-            store.append_step_log(run_id, "upload", "Skipped YouTube upload")
+            store.append_step_log(
+                run_id, "local", f"Saved as '{video_title}.mp4' (manual YouTube upload)"
+            )
 
         manifest: dict[str, Any] = {
             "run_id": run_id,
             "country": country.code,
             "run_date": run_date,
             "trends": trends,
+            "trends_count": len(trends),
             "news": news,
+            "images": images,
+            "display_titles": display_titles,
             "script_path": script_path,
+            "video_title": video_title,
             "video_path": video_path,
             "youtube_video_id": youtube_id,
         }
@@ -97,7 +128,11 @@ def main() -> None:
     parser.add_argument("--country", required=True, help="Country code (e.g. US)")
     parser.add_argument("--date", default=None, help="Run date YYYY-MM-DD")
     parser.add_argument("--mock", action="store_true", help="Use mock trends/news providers")
-    parser.add_argument("--skip-upload", action="store_true", help="Skip YouTube upload")
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Force YouTube upload (future scope; requires youtube.enabled or this flag)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -106,7 +141,7 @@ def main() -> None:
     )
 
     store.init_db()
-    trends_provider = "mock" if args.mock else "pytrends"
+    trends_provider = "mock" if args.mock else "http"
     news_provider = "mock" if args.mock else "google_news_rss"
 
     run_id = run_country_pipeline(
@@ -114,7 +149,8 @@ def main() -> None:
         run_date=args.date,
         trends_provider=trends_provider,
         news_provider=news_provider,
-        skip_upload=args.skip_upload,
+        skip_upload=True,
+        force_upload=args.upload,
     )
     print(f"Run {run_id} completed. Check output/ and dashboard at http://127.0.0.1:8080")
 
