@@ -1,0 +1,27 @@
+top_trends: 10
+max_news_per_trend: 2
+
+web:
+  host: 127.0.0.1
+  port: 8080
+
+video:
+  width: 1920
+  height: 1080
+  target_duration_sec: 180
+  fps: 24
+  format: mp4
+
+tts:
+  provider: edge-tts
+  voice_map:
+    en: en-US-JennyNeural
+
+script:
+  intro_template: "Here are today's top trending searches in {country}."
+  outro_template: "Thanks for watching. Subscribe for daily trends updates."
+
+youtube:
+  category_id: "25"
+  privacy: public
+  made_for_kids: false

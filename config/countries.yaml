@@ -1,0 +1,27 @@
+# Add or remove countries here. Restart the app after changes.
+#
+# Fields:
+#   code         - ISO country code (used in output paths and API calls)
+#   name         - Display name for titles and narration
+#   timezone     - IANA timezone for 9pm scheduling (e.g. America/New_York)
+#   trends_geo   - Google Trends geo code for today_searches()
+#   trends_pn    - pytrends pn parameter for trending_searches() fallback
+#   language     - Narration language code (maps to TTS voice in pipeline.yaml)
+#   youtube_tags - Tags appended to each upload for this country
+
+countries:
+  - code: US
+    name: United States
+    timezone: America/New_York
+    trends_geo: US
+    trends_pn: united_states
+    language: en
+    youtube_tags: [trends, news, usa]
+
+  - code: IN
+    name: India
+    timezone: Asia/Kolkata
+    trends_geo: IN
+    trends_pn: india
+    language: en
+    youtube_tags: [trends, news, india]

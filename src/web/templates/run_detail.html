@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Run #{{ run.id }} — Trends Pipeline</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% if run.status == 'running' %}
+  <meta http-equiv="refresh" content="15">
+  {% endif %}
+</head>
+<body>
+  <header>
+    <a href="/" class="back-link">← Back to dashboard</a>
+    <h1>Run #{{ run.id }} — {{ run.country_name }}</h1>
+    <p class="subtitle">{{ run.run_date }} · <span class="badge badge-{{ run.status }}">{{ run.status }}</span> · {{ run.duration }}</p>
+  </header>
+
+  {% if run.error_message %}
+  <section class="panel error-panel">
+    <h2>Error</h2>
+    <pre>{{ run.error_message }}</pre>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Step Log</h2>
+    <ol class="step-log">
+      {% for step in run.steps %}
+      <li>
+        <strong>{{ step.step }}</strong>
+        {% if step.detail %} — {{ step.detail }}{% endif %}
+        <span class="hint">{{ step.at }}</span>
+      </li>
+      {% else %}
+      <li>No steps recorded yet.</li>
+      {% endfor %}
+    </ol>
+  </section>
+
+  <section class="panel">
+    <h2>Trending Searches</h2>
+    {% if run.trends %}
+    <ol>
+      {% for trend in run.trends %}
+      <li>{{ trend }}</li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="hint">No trends data yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>News Headlines</h2>
+    {% if run.news %}
+    {% for keyword, items in run.news.items() %}
+    <div class="news-block">
+      <h3>{{ keyword }}</h3>
+      <ul>
+        {% for item in items %}
+        <li>
+          <a href="{{ item.link }}" target="_blank">{{ item.title }}</a>
+        </li>
+        {% else %}
+        <li class="hint">No news found.</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="hint">No news data yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Artifacts</h2>
+    <ul class="artifact-list">
+      {% if run.script_path %}
+      <li>Script: <code>{{ run.script_path }}</code></li>
+      {% endif %}
+      {% if run.video_path %}
+      <li>Video: <code>{{ run.video_path }}</code></li>
+      {% endif %}
+      {% if run.youtube_video_id and run.youtube_video_id != 'skipped' %}
+      <li>YouTube: <a href="https://youtube.com/watch?v={{ run.youtube_video_id }}" target="_blank">{{ run.youtube_video_id }}</a></li>
+      {% endif %}
+    </ul>
+  </section>
+
+  {% if run.script_content %}
+  <section class="panel">
+    <h2>Narration Script</h2>
+    <pre class="script-preview">{{ run.script_content }}</pre>
+  </section>
+  {% endif %}
+</body>
+</html>

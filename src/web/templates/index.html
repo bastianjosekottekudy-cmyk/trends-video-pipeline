@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trends Video Pipeline</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% if has_running %}
+  <meta http-equiv="refresh" content="30">
+  {% endif %}
+</head>
+<body>
+  <header>
+    <h1>Trends Video Pipeline</h1>
+    <p class="subtitle">Daily Google Trends → Narrated Video → YouTube</p>
+  </header>
+
+  <section class="cards">
+    <div class="card">
+      <div class="card-value">{{ stats.today_total }}</div>
+      <div class="card-label">Runs Today</div>
+    </div>
+    <div class="card success">
+      <div class="card-value">{{ stats.today_success }}</div>
+      <div class="card-label">Successful</div>
+    </div>
+    <div class="card danger">
+      <div class="card-value">{{ stats.today_failed }}</div>
+      <div class="card-label">Failed</div>
+    </div>
+    <div class="card warning">
+      <div class="card-value">{{ stats.running }}</div>
+      <div class="card-label">Running Now</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Trigger Manual Run</h2>
+    <div class="trigger-row">
+      {% for country in countries %}
+      <button class="btn" onclick="triggerRun('{{ country.code }}', false)">
+        Run {{ country.code }}
+      </button>
+      <button class="btn btn-secondary" onclick="triggerRun('{{ country.code }}', true)">
+        Mock {{ country.code }}
+      </button>
+      {% endfor %}
+    </div>
+    <p id="trigger-status" class="hint"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Next Scheduled Runs (9pm local)</h2>
+    <ul class="schedule-list">
+      {% for item in next_runs %}
+      <li><strong>{{ item.country_code }}</strong> — {{ item.next_run }}</li>
+      {% else %}
+      <li>Scheduler not active</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>Run History</h2>
+    <form method="get" class="filter-form">
+      <label>Filter by country:</label>
+      <select name="country" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for country in countries %}
+        <option value="{{ country.code }}" {% if filter_country == country.code %}selected{% endif %}>
+          {{ country.code }} — {{ country.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Date</th>
+          <th>Country</th>
+          <th>Status</th>
+          <th>Duration</th>
+          <th>YouTube</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td>{{ run.id }}</td>
+          <td>{{ run.run_date }}</td>
+          <td>{{ run.country_code }}</td>
+          <td><span class="badge badge-{{ run.status }}">{{ run.status }}</span></td>
+          <td>{{ run.duration }}</td>
+          <td>
+            {% if run.youtube_video_id and run.youtube_video_id != 'skipped' %}
+            <a href="https://youtube.com/watch?v={{ run.youtube_video_id }}" target="_blank">Watch</a>
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td><a href="/runs/{{ run.id }}">Details</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7">No runs yet. Trigger a manual run above.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <script>
+    async function triggerRun(code, mock) {
+      const status = document.getElementById('trigger-status');
+      status.textContent = `Starting run for ${code}...`;
+      try {
+        const res = await fetch(`/api/trigger/${code}?mock=${mock}&skip_upload=false`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          status.textContent = `Run ${data.run_id} started. Refreshing...`;
+          setTimeout(() => location.reload(), 2000);
+        } else {
+          status.textContent = data.detail || 'Failed to start run';
+        }
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>
