@@ -396,4 +396,5 @@ async def api_trigger(
 
 def create_app() -> FastAPI:
     store.init_db()
+    store.fail_orphaned_runs()
     return app

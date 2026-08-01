@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
@@ -54,7 +55,11 @@ def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
             "C:/Windows/Fonts/calibri.ttf",
         ]
     )
-    candidates += ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+    candidates += [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        if bold
+        else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    ]
     for path in candidates:
         try:
             return ImageFont.truetype(path, size)
@@ -127,6 +132,7 @@ def _draw_title_block(
     rank: int | None = None,
     *,
     margin: int = 80,
+    show_meaning_label: bool = True,
 ) -> None:
     title_font = _get_font(62, bold=True)
     sub_font = _get_font(32, bold=False)
@@ -157,15 +163,18 @@ def _draw_title_block(
 
     sub_y = title_y + len(title_lines) * line_h + 18
     if subtitle:
-        news_label = "WHAT IT MEANS"
-        _draw_text_with_shadow(
-            draw, (margin, sub_y), news_label, label_font, fill=(255, 196, 120)
-        )
+        text_y = sub_y
+        if show_meaning_label:
+            news_label = "WHAT IT MEANS"
+            _draw_text_with_shadow(
+                draw, (margin, sub_y), news_label, label_font, fill=(255, 196, 120)
+            )
+            text_y = sub_y + 40
         sub_lines = _wrap_text(subtitle, sub_font, max_text_width, draw)[:3]
         for i, line in enumerate(sub_lines):
             _draw_text_with_shadow(
                 draw,
-                (margin, sub_y + 40 + i * 40),
+                (margin, text_y + i * 40),
                 line,
                 sub_font,
                 fill=(230, 235, 240),
@@ -180,6 +189,8 @@ def _make_solid_slide(
     title: str,
     subtitle: str,
     rank: int | None = None,
+    *,
+    show_meaning_label: bool = True,
 ) -> Image.Image:
     img = Image.new("RGB", (width, height), color=(14, 20, 34))
     # subtle top accent
@@ -188,7 +199,15 @@ def _make_solid_slide(
         alpha = int(40 * (1 - y / 180))
         draw.rectangle([(0, y), (width, y + 1)], fill=(40, 80, 140, alpha))
     draw_rgb = ImageDraw.Draw(img)
-    _draw_title_block(draw_rgb, width, height, title, subtitle, rank)
+    _draw_title_block(
+        draw_rgb,
+        width,
+        height,
+        title,
+        subtitle,
+        rank,
+        show_meaning_label=show_meaning_label,
+    )
     return img.convert("RGB")
 
 
@@ -199,6 +218,8 @@ def _make_image_slide(
     title: str,
     subtitle: str,
     rank: int | None = None,
+    *,
+    show_meaning_label: bool = True,
 ) -> Image.Image:
     try:
         base = Image.open(image_path).convert("RGB")
@@ -207,14 +228,29 @@ def _make_image_slide(
         base = ImageEnhance.Contrast(base).enhance(1.05)
     except Exception as exc:
         logger.warning("Could not open image %s: %s", image_path, exc)
-        return _make_solid_slide(width, height, title, subtitle, rank=rank)
+        return _make_solid_slide(
+            width,
+            height,
+            title,
+            subtitle,
+            rank=rank,
+            show_meaning_label=show_meaning_label,
+        )
 
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     _draw_gradient(draw, width, height)
     composed = Image.alpha_composite(base.convert("RGBA"), overlay).convert("RGB")
     draw2 = ImageDraw.Draw(composed)
-    _draw_title_block(draw2, width, height, title, subtitle, rank)
+    _draw_title_block(
+        draw2,
+        width,
+        height,
+        title,
+        subtitle,
+        rank,
+        show_meaning_label=show_meaning_label,
+    )
     return composed
 
 
@@ -255,6 +291,20 @@ def _resolve_encoder(video_cfg: dict[str, Any]) -> tuple[str, list[str]]:
     return "libx264", ["-preset", "veryfast", "-crf", "23"]
 
 
+def _load_segment_durations(output_dir: Path) -> list[dict[str, Any]] | None:
+    meta_path = output_dir / "narration_segments.json"
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    segments = data.get("segments")
+    if not isinstance(segments, list) or not segments:
+        return None
+    return segments
+
+
 def render_video(
     country: Country,
     trends: list[str],
@@ -280,46 +330,64 @@ def render_video(
     slides_dir = output_dir / "slides"
     slides_dir.mkdir(exist_ok=True)
 
+    # Build slide groups aligned with audio segments: intro, trends..., outro
+    groups: list[list[Path]] = []
+
     intro = _make_solid_slide(
         width,
         height,
         title,
         f"Top {len(trends)} searches · {country.name}",
+        show_meaning_label=False,
     )
     intro_path = slides_dir / "00_intro.png"
     intro.save(intro_path, optimize=True)
+    groups.append([intro_path])
 
-    slide_paths: list[Path] = [intro_path]
     for idx, keyword in enumerate(trends, start=1):
         display_title, subtitle = _card_for(keyword, news, display_titles)
         trend_images = images.get(keyword) or []
         safe_kw = keyword[:30].replace("/", "-").replace("\\", "-")
+        group: list[Path] = []
 
         if trend_images:
             for img_i, img_path in enumerate(trend_images, start=1):
                 slide = _make_image_slide(
-                    width, height, img_path, display_title, subtitle, rank=idx
+                    width,
+                    height,
+                    img_path,
+                    display_title,
+                    subtitle,
+                    rank=idx,
+                    show_meaning_label=True,
                 )
                 slide_path = slides_dir / f"{idx:02d}_{safe_kw}_{img_i}.png"
                 slide.save(slide_path, optimize=True)
-                slide_paths.append(slide_path)
+                group.append(slide_path)
         else:
             slide = _make_solid_slide(
-                width, height, display_title, subtitle, rank=idx
+                width,
+                height,
+                display_title,
+                subtitle,
+                rank=idx,
+                show_meaning_label=True,
             )
             slide_path = slides_dir / f"{idx:02d}_{safe_kw}.png"
             slide.save(slide_path, optimize=True)
-            slide_paths.append(slide_path)
+            group.append(slide_path)
+        groups.append(group)
 
     outro = _make_solid_slide(
         width,
         height,
         "Thanks for watching",
         "Subscribe for daily trends",
+        show_meaning_label=False,
     )
     outro_path = slides_dir / "99_outro.png"
     outro.save(outro_path, optimize=True)
-    slide_paths.append(outro_path)
+    groups.append([outro_path])
 
     audio = AudioFileClip(audio_path)
     audio_duration = float(audio.duration)
@@ -332,11 +400,38 @@ def render_video(
         audio = audio.subclipped(0, max_duration)
         audio_duration = max_duration
 
-    per_slide = max(audio_duration / len(slide_paths), 1.5)
-    clips = [
-        ImageClip(str(path)).with_duration(per_slide).with_fps(fps)
-        for path in slide_paths
-    ]
+    timed_segments = _load_segment_durations(output_dir)
+    clips: list[Any] = []
+
+    if timed_segments and len(timed_segments) == len(groups):
+        for group, segment in zip(groups, timed_segments):
+            group_dur = float(segment.get("duration_sec") or 0.0)
+            if group_dur <= 0:
+                group_dur = max(audio_duration / len(groups), 1.5)
+            per_slide = max(group_dur / len(group), 0.4)
+            for path in group:
+                clips.append(
+                    ImageClip(str(path)).with_duration(per_slide).with_fps(fps)
+                )
+        logger.info(
+            "Synced %s slide groups to narration segments",
+            len(groups),
+        )
+    else:
+        # Fallback: equal split across all slides
+        if timed_segments:
+            logger.warning(
+                "Segment count (%s) != slide groups (%s); equal timing fallback",
+                len(timed_segments),
+                len(groups),
+            )
+        all_paths = [p for g in groups for p in g]
+        per_slide = max(audio_duration / len(all_paths), 1.5)
+        clips = [
+            ImageClip(str(path)).with_duration(per_slide).with_fps(fps)
+            for path in all_paths
+        ]
+
     video = concatenate_videoclips(clips, method="compose")
     video = video.with_audio(audio)
 

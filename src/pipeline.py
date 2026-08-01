@@ -64,6 +64,18 @@ def run_country_pipeline(
         script_path = generate_script(country, trends, news, output_dir)
         store.update_run(run_id, script_path=script_path)
 
+        # Prefer keywords that actually have spoken beats (may be trimmed)
+        spoken_trends = list(trends)
+        segments_path = output_dir / "script_segments.json"
+        if segments_path.exists():
+            try:
+                seg_data = json.loads(segments_path.read_text(encoding="utf-8"))
+                keywords = seg_data.get("trend_keywords") or []
+                if keywords:
+                    spoken_trends = [str(k) for k in keywords]
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Could not read script segments: %s", exc)
+
         store.append_step_log(run_id, "tts", "Generating voiceover")
         audio_path = generate_narration(Path(script_path), country, output_dir)
 
@@ -71,7 +83,7 @@ def run_country_pipeline(
         video_title = build_video_title(country.name, run_date)
         video_path = render_video(
             country,
-            trends,
+            spoken_trends,
             news,
             audio_path,
             output_dir,

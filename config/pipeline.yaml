@@ -18,13 +18,15 @@ video:
 
 tts:
   provider: edge-tts
+  rate: "-12%"
+  segment_pause_sec: 0.55
   voice_map:
     en: en-US-JennyNeural
 
 script:
   provider: groq   # groq | template
   model: llama-3.1-8b-instant
-  style: witty, concise, news-host energy; no invented facts
+  style: warm, conversational spoken host; natural pacing; complete sentences; no headline-reading; no invented facts
   intro_template: "Here are today's top trending searches in {country}."
   outro_template: "Thanks for watching. Subscribe for daily trends updates."
 

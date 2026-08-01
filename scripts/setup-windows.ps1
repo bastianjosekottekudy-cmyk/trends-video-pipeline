@@ -49,6 +49,8 @@ Write-Host ""
 Write-Host "Setup complete!" -ForegroundColor Green
 Write-Host "Next steps:"
 Write-Host "  1. Start: .\scripts\run.ps1"
-Write-Host "  2. Open: http://127.0.0.1:8080"
-Write-Host "  3. Generate a video (videos are stored locally under output/)"
+Write-Host "     Or background restart: .\scripts\restart-app.ps1 -Background"
+Write-Host "  2. Auto-start at logon: .\scripts\restart-app.ps1 -RegisterStartup"
+Write-Host "  3. Open: http://127.0.0.1:8080"
+Write-Host "  4. Generate a video (videos are stored locally under output/)"
 

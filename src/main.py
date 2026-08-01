@@ -22,6 +22,14 @@ def main() -> None:
     )
 
     store.init_db()
+    orphaned = store.fail_orphaned_runs()
+    if orphaned:
+        logger.warning(
+            "Marked %s orphaned run(s) as failed after restart: %s",
+            len(orphaned),
+            orphaned,
+        )
+
     config = load_pipeline_config()
     web_cfg = config.get("web", {})
     host = web_cfg.get("host", "127.0.0.1")

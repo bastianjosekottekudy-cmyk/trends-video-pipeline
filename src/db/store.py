@@ -103,6 +103,47 @@ def finish_run(run_id: int, status: str, error_message: str | None = None) -> No
     )
 
 
+def fail_orphaned_runs(
+    error_message: str = "Interrupted by app restart",
+) -> list[int]:
+    """Mark any leftover 'running' rows as failed (process died mid-job)."""
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id FROM runs WHERE status = 'running'"
+        ).fetchall()
+        ids = [int(row["id"]) for row in rows]
+        if not ids:
+            return []
+        conn.execute(
+            """
+            UPDATE runs
+            SET status = 'failed',
+                finished_at = ?,
+                error_message = ?
+            WHERE status = 'running'
+            """,
+            (now, error_message),
+        )
+        for run_id in ids:
+            row = conn.execute(
+                "SELECT steps_log FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            log: list[dict[str, str]] = json.loads(row["steps_log"] or "[]")
+            log.append(
+                {
+                    "step": "interrupted",
+                    "detail": error_message,
+                    "at": now,
+                }
+            )
+            conn.execute(
+                "UPDATE runs SET steps_log = ? WHERE id = ?",
+                (json.dumps(log), run_id),
+            )
+    return ids
+
+
 def get_run(run_id: int) -> dict[str, Any] | None:
     with db() as conn:
         row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
