@@ -33,3 +33,11 @@ countries:
     trends_pn: united_kingdom
     language: en
     youtube_tags: [trends, news, uk, united kingdom]
+
+  - code: CY
+    name: Cyprus
+    timezone: Asia/Nicosia
+    trends_geo: CY
+    trends_pn: cyprus
+    language: en
+    youtube_tags: [trends, news, cyprus]
