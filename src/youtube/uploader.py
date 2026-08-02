@@ -26,9 +26,10 @@ def _build_description(
     trends: list[str],
     news: dict[str, list[dict[str, Any]]],
     run_date: str,
+    period: str | None = None,
 ) -> str:
     lines = [
-        build_video_title(country.name, run_date),
+        build_video_title(country.name, run_date, period),
         "",
         "Trending searches:",
     ]
@@ -54,6 +55,7 @@ def upload_video(
     trends: list[str],
     news: dict[str, list[dict[str, Any]]],
     run_date: str,
+    period: str | None = None,
 ) -> str:
     if get_env("SKIP_YOUTUBE_UPLOAD", "false").lower() in ("true", "1", "yes"):
         raise YouTubeUploadError(
@@ -81,8 +83,8 @@ def upload_video(
 
     youtube = build("youtube", "v3", credentials=creds)
 
-    title = build_video_title(country.name, run_date)
-    description = _build_description(country, trends, news, run_date)
+    title = build_video_title(country.name, run_date, period)
+    description = _build_description(country, trends, news, run_date, period=period)
     tags = list(country.youtube_tags) + ["google trends", "daily news"]
 
     body = {

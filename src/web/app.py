@@ -16,9 +16,16 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from src.config import OUTPUT_DIR, get_country, load_countries, local_run_date, load_pipeline_config
+from src.config import (
+    OUTPUT_DIR,
+    get_country,
+    load_countries,
+    local_run_date,
+    local_time_label,
+    load_pipeline_config,
+)
 from src.db import store
-from src.naming import title_from_video_path
+from src.naming import PERIOD_EVENING, normalize_period, resolve_title_slot, title_from_video_path
 from src.pipeline import run_country_pipeline
 from src.scheduler import get_next_run_times
 
@@ -211,6 +218,7 @@ def _enrich_run(run: dict[str, Any]) -> dict[str, Any]:
         run.get("video_path"),
         country_name=run.get("country_name") or "",
         run_date=run.get("run_date") or "",
+        period=run.get("period"),
     )
     upload_status = _normalize_upload_status(run)
     run["upload_status"] = upload_status
@@ -274,6 +282,7 @@ def _upload_run_video(run_id: int) -> None:
         trends,
         news,
         str(run.get("run_date") or local_run_date(country)),
+        period=resolve_title_slot(run.get("period")),
     )
 
 
@@ -285,19 +294,25 @@ def _group_by_date(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"date": date, "runs": items} for date, items in grouped.items()]
 
 
-def _scheduled_run(country_code: str) -> None:
+def _scheduled_run(country_code: str, period: str = PERIOD_EVENING) -> None:
+    slot = normalize_period(period) or PERIOD_EVENING
     with _running_lock:
         if country_code in _running_countries:
-            logger.warning("Skipping scheduled run for %s — already running", country_code)
+            logger.warning(
+                "Skipping scheduled %s run for %s — already running",
+                slot,
+                country_code,
+            )
             return
         _running_countries.add(country_code)
     try:
         run_country_pipeline(
             country_code,
             skip_upload=not _youtube_enabled(),
+            period=slot,
         )
     except Exception:
-        logger.exception("Scheduled run failed for %s", country_code)
+        logger.exception("Scheduled %s run failed for %s", slot, country_code)
     finally:
         with _running_lock:
             _running_countries.discard(country_code)
@@ -461,6 +476,9 @@ async def api_trigger(
     except StopIteration:
         raise HTTPException(status_code=404, detail=f"Unknown country: {code}") from None
 
+    # Manual generate: put the local clock time in the title (not Morning/Evening)
+    slot = local_time_label(country)
+
     with _running_lock:
         if code in _running_countries:
             raise HTTPException(status_code=409, detail=f"{code} is already running")
@@ -470,6 +488,7 @@ async def api_trigger(
             code,
             country.name,
             local_run_date(country),
+            period=slot,
         )
 
         def _bg(rid: int) -> None:
@@ -482,6 +501,7 @@ async def api_trigger(
                     news_provider="mock" if mock else "google_news_rss",
                     skip_upload=not _youtube_enabled(),
                     existing_run_id=rid,
+                    period=slot,
                 )
             except Exception:
                 logger.exception("Background run failed for %s", code)
@@ -490,7 +510,9 @@ async def api_trigger(
                     _running_countries.discard(code)
 
         background_tasks.add_task(_bg, run_id)
-        return JSONResponse({"run_id": run_id, "status": "started"})
+        return JSONResponse(
+            {"run_id": run_id, "status": "started", "period": slot}
+        )
 
     with _running_lock:
         _running_countries.add(code)
@@ -500,11 +522,14 @@ async def api_trigger(
             trends_provider="mock" if mock else "http",
             news_provider="mock" if mock else "google_news_rss",
             skip_upload=not _youtube_enabled(),
+            period=slot,
         )
     finally:
         with _running_lock:
             _running_countries.discard(code)
-    return JSONResponse({"run_id": run_id, "status": "completed"})
+    return JSONResponse(
+        {"run_id": run_id, "status": "completed", "period": slot}
+    )
 
 
 def create_app() -> FastAPI:

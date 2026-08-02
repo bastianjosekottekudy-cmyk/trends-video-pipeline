@@ -314,6 +314,7 @@ def render_video(
     run_date: str,
     images: dict[str, list[str]] | None = None,
     display_titles: dict[str, dict[str, str]] | None = None,
+    period: str | None = None,
 ) -> str:
     config = load_pipeline_config()
     video_cfg = config.get("video", {})
@@ -321,7 +322,7 @@ def render_video(
     height = int(video_cfg.get("height", 1080))
     fps = int(video_cfg.get("fps", 24))
     max_duration = float(config.get("max_video_duration_sec", 570))
-    title = build_video_title(country.name, run_date)
+    title = build_video_title(country.name, run_date, period)
     codec, ffmpeg_params = _resolve_encoder(video_cfg)
     images = images or {}
 
@@ -438,7 +439,7 @@ def render_video(
     if video.duration > audio_duration:
         video = video.subclipped(0, audio_duration)
 
-    output_path = output_dir / video_filename(country.name, run_date)
+    output_path = output_dir / video_filename(country.name, run_date, period)
     write_kwargs: dict[str, Any] = {
         "fps": fps,
         "codec": codec,

@@ -3,7 +3,7 @@
 # Fields:
 #   code         - ISO country code (used in output paths and API calls)
 #   name         - Display name for titles and narration
-#   timezone     - IANA timezone for 9pm scheduling (e.g. America/New_York)
+#   timezone     - IANA timezone for 9am + 9pm scheduling (e.g. America/New_York)
 #   trends_geo   - Google Trends geo code for today_searches()
 #   trends_pn    - pytrends pn parameter for trending_searches() fallback
 #   language     - Narration language code (maps to TTS voice in pipeline.yaml)

@@ -50,6 +50,20 @@ def local_run_date(country: Country) -> str:
     return datetime.now(ZoneInfo(country.timezone)).strftime("%Y-%m-%d")
 
 
+def local_period(country: Country) -> str:
+    """Morning before local noon, Evening from noon onward (scheduled-style)."""
+    from src.naming import PERIOD_EVENING, PERIOD_MORNING
+
+    hour = datetime.now(ZoneInfo(country.timezone)).hour
+    return PERIOD_MORNING if hour < 12 else PERIOD_EVENING
+
+
+def local_time_label(country: Country) -> str:
+    """Local clock for manual generates, e.g. '9:47 PM'."""
+    now = datetime.now(ZoneInfo(country.timezone))
+    return now.strftime("%I:%M %p").lstrip("0")
+
+
 def load_pipeline_config() -> dict[str, Any]:
     path = CONFIG_DIR / "pipeline.yaml"
     with path.open(encoding="utf-8") as f:

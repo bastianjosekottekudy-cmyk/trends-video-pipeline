@@ -46,11 +46,11 @@
     <div class="panel-head">
       <h2>Generate video</h2>
       <p class="hint">
-        Creates a local MP4 under <code>output/</code>.
+        One generate button per country. Manual titles use the local clock time
+        (e.g. <code>Cyprus 9:47 PM Trends …</code>). Scheduled 9am/9pm runs still use
+        Morning / Evening.
         {% if youtube_enabled %}
-        Auto-uploads to YouTube when auth is configured; you can also Upload from each card.
-        {% else %}
-        YouTube auto-upload is off — use Upload on a card after enabling it.
+        Auto-uploads to YouTube when auth is configured.
         {% endif %}
       </p>
     </div>
@@ -96,10 +96,10 @@
 
   {% if next_runs %}
   <section class="panel schedule-panel">
-    <h2>Next scheduled (9pm local)</h2>
+    <h2>Next scheduled (9am / 9pm local)</h2>
     <ul class="schedule-list">
       {% for item in next_runs %}
-      <li><strong>{{ item.country_code }}</strong> — {{ item.next_run }}</li>
+      <li><strong>{{ item.country_code }}</strong> {{ item.period }} — {{ item.next_run }}</li>
       {% endfor %}
     </ul>
   </section>
@@ -175,7 +175,7 @@
         const res = await fetch(`/api/trigger/${code}?mock=${mock}`, { method: 'POST' });
         const data = await res.json();
         if (res.ok) {
-          status.textContent = `Run #${data.run_id} started. Refreshing…`;
+          status.textContent = `Run #${data.run_id}${data.period ? ' · ' + data.period : ''} started. Refreshing…`;
           setTimeout(() => location.reload(), 1500);
         } else {
           status.textContent = data.detail || 'Failed to start run';

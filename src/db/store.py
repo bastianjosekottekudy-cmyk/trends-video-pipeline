@@ -46,12 +46,14 @@ def init_db() -> None:
                 error_message TEXT,
                 steps_log TEXT,
                 upload_status TEXT NOT NULL DEFAULT 'none',
-                upload_error TEXT
+                upload_error TEXT,
+                period TEXT
             )
             """
         )
         _ensure_column(conn, "runs", "upload_status", "TEXT NOT NULL DEFAULT 'none'")
         _ensure_column(conn, "runs", "upload_error", "TEXT")
+        _ensure_column(conn, "runs", "period", "TEXT")
         # Backfill uploaded rows that only have youtube_video_id
         conn.execute(
             """
@@ -76,18 +78,23 @@ def db() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def create_run(country_code: str, country_name: str, run_date: str) -> int:
+def create_run(
+    country_code: str,
+    country_name: str,
+    run_date: str,
+    period: str | None = None,
+) -> int:
     now = datetime.now(timezone.utc).isoformat()
     with db() as conn:
         cur = conn.execute(
             """
             INSERT INTO runs (
                 country_code, country_name, run_date, status,
-                started_at, steps_log, upload_status
+                started_at, steps_log, upload_status, period
             )
-            VALUES (?, ?, ?, 'running', ?, '[]', 'none')
+            VALUES (?, ?, ?, 'running', ?, '[]', 'none', ?)
             """,
-            (country_code.upper(), country_name, run_date, now),
+            (country_code.upper(), country_name, run_date, now, period),
         )
         return int(cur.lastrowid)
 

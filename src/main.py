@@ -36,7 +36,7 @@ def main() -> None:
     port = int(web_cfg.get("port", 8080))
 
     start_scheduler(_scheduled_run)
-    logger.info("Scheduler started — jobs fire at 21:00 per country timezone")
+    logger.info("Scheduler started — jobs fire at 09:00 and 21:00 per country timezone")
     logger.info("Dashboard: http://%s:%s", host, port)
 
     try:
