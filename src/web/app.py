@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from src.config import OUTPUT_DIR, load_countries
+from src.config import OUTPUT_DIR, load_countries, local_run_date
 from src.db import store
 from src.naming import title_from_video_path
 from src.pipeline import run_country_pipeline
@@ -356,7 +356,7 @@ async def api_trigger(
         run_id = store.create_run(
             code,
             country.name,
-            datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            local_run_date(country),
         )
 
         def _bg(rid: int) -> None:

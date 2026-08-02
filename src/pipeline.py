@@ -5,12 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from src.audio.tts import generate_narration
-from src.config import country_output_dir, get_country, load_pipeline_config
+from src.config import country_output_dir, get_country, load_pipeline_config, local_run_date
 from src.db import store
 from src.images.fetcher import fetch_images_for_trends
 from src.naming import build_video_title
@@ -39,7 +38,11 @@ def run_country_pipeline(
     existing_run_id: int | None = None,
 ) -> int:
     country = get_country(country_code)
-    run_date = run_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if not run_date and existing_run_id:
+        existing = store.get_run(existing_run_id)
+        if existing and existing.get("run_date"):
+            run_date = str(existing["run_date"])
+    run_date = run_date or local_run_date(country)
 
     run_id = existing_run_id or store.create_run(country.code, country.name, run_date)
     output_dir = country_output_dir(country.code, run_date, run_id=run_id)

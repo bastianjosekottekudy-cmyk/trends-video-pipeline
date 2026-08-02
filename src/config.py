@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
@@ -41,6 +43,11 @@ def get_country(code: str) -> Country:
         if country.code.upper() == code.upper():
             return country
     raise ValueError(f"Unknown country code: {code}")
+
+
+def local_run_date(country: Country) -> str:
+    """Calendar date in the country's timezone (YYYY-MM-DD)."""
+    return datetime.now(ZoneInfo(country.timezone)).strftime("%Y-%m-%d")
 
 
 def load_pipeline_config() -> dict[str, Any]:
