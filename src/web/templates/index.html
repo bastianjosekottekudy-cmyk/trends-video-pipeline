@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Trends Video Library</title>
   <link rel="stylesheet" href="/static/style.css">
-  {% if has_running %}
+  {% if has_running or has_uploading %}
   <meta http-equiv="refresh" content="15">
   {% endif %}
 </head>
@@ -13,7 +13,7 @@
   <header class="site-header">
     <div>
       <h1>Trends Video Library</h1>
-      <p class="subtitle">Daily Google Trends → Narrated Video (local)</p>
+      <p class="subtitle">Daily Google Trends → Narrated Video{% if youtube_enabled %} · YouTube upload on{% endif %}</p>
     </div>
     <div class="header-actions">
       <label class="toggle">
@@ -37,15 +37,22 @@
       <div class="card-label">Failed today</div>
     </div>
     <div class="card">
-      <div class="card-value">{{ available_dates|length }}</div>
-      <div class="card-label">Dates stored</div>
+      <div class="card-value">{{ stats.uploading or 0 }}</div>
+      <div class="card-label">Uploading</div>
     </div>
   </section>
 
   <section class="panel generate-panel">
     <div class="panel-head">
       <h2>Generate video</h2>
-      <p class="hint">Creates a local MP4 under <code>output/</code>. Upload to YouTube manually.</p>
+      <p class="hint">
+        Creates a local MP4 under <code>output/</code>.
+        {% if youtube_enabled %}
+        Auto-uploads to YouTube when auth is configured; you can also Upload from each card.
+        {% else %}
+        YouTube auto-upload is off — use Upload on a card after enabling it.
+        {% endif %}
+      </p>
     </div>
     <div class="trigger-row">
       {% for country in countries %}
@@ -127,13 +134,23 @@
           {% else %}
           <div class="placeholder">No video file</div>
           {% endif %}
+          {% if run.is_uploaded and run.youtube_url %}
+          <p class="meta yt-link"><a href="{{ run.youtube_url }}" target="_blank" rel="noopener">Watch on YouTube</a></p>
+          {% elif run.upload_status == 'failed' and run.upload_error %}
+          <p class="meta upload-error">Upload failed — retry below</p>
+          {% elif run.upload_status == 'uploading' %}
+          <p class="meta">Uploading to YouTube…</p>
+          {% endif %}
           <div class="card-actions">
             {% if run.has_video %}
             <a class="btn btn-small" href="/videos/{{ run.id }}/file">Play</a>
             <a class="btn btn-small btn-secondary" href="/videos/{{ run.id }}/download">Download</a>
+            {% if run.can_upload and run.upload_status != 'uploading' %}
+            <button type="button" class="btn btn-small btn-upload" onclick="uploadRun({{ run.id }})">{{ run.upload_label }}</button>
+            {% endif %}
             {% endif %}
             <a class="btn btn-small btn-ghost" href="/runs/{{ run.id }}">Details</a>
-            {% if run.status != 'running' %}
+            {% if run.status != 'running' and run.upload_status != 'uploading' %}
             <button type="button" class="btn btn-small btn-danger" onclick='deleteRun({{ run.id }}, {{ run.video_title|tojson }})'>Delete</button>
             {% endif %}
           </div>
@@ -180,6 +197,20 @@
           location.reload();
         } else {
           alert(data.detail || 'Delete failed');
+        }
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    }
+
+    async function uploadRun(id) {
+      try {
+        const res = await fetch('/api/runs/' + id + '/upload', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          location.reload();
+        } else {
+          alert(data.detail || 'Upload failed to start');
         }
       } catch (e) {
         alert('Error: ' + e.message);

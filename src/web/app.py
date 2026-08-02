@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from src.config import OUTPUT_DIR, load_countries, local_run_date
+from src.config import OUTPUT_DIR, get_country, load_countries, local_run_date, load_pipeline_config
 from src.db import store
 from src.naming import title_from_video_path
 from src.pipeline import run_country_pipeline
@@ -32,6 +32,12 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="stati
 
 _running_lock = threading.Lock()
 _running_countries: set[str] = set()
+_upload_lock = threading.Lock()
+_uploading_runs: set[int] = set()
+
+
+def _youtube_enabled() -> bool:
+    return bool(load_pipeline_config().get("youtube", {}).get("enabled", False))
 
 
 def _parse_json_field(value: str | None) -> Any:
@@ -187,6 +193,16 @@ def _delete_run_artifacts(run: dict[str, Any]) -> list[str]:
     return deleted
 
 
+def _normalize_upload_status(run: dict[str, Any]) -> str:
+    status = (run.get("upload_status") or "none").strip().lower()
+    if status in ("uploading", "failed", "uploaded"):
+        return status
+    yt_id = (run.get("youtube_video_id") or "").strip()
+    if yt_id and yt_id != "skipped":
+        return "uploaded"
+    return "none"
+
+
 def _enrich_run(run: dict[str, Any]) -> dict[str, Any]:
     run["duration"] = _duration(run.get("started_at"), run.get("finished_at"))
     run["trend_count"] = _trend_count(run)
@@ -196,13 +212,69 @@ def _enrich_run(run: dict[str, Any]) -> dict[str, Any]:
         country_name=run.get("country_name") or "",
         run_date=run.get("run_date") or "",
     )
-    if run.get("status") == "success" and not run["has_video"]:
+    upload_status = _normalize_upload_status(run)
+    run["upload_status"] = upload_status
+    yt_id = (run.get("youtube_video_id") or "").strip()
+    run["is_uploaded"] = upload_status == "uploaded" and bool(yt_id) and yt_id != "skipped"
+    run["youtube_url"] = (
+        f"https://www.youtube.com/watch?v={yt_id}" if run["is_uploaded"] else ""
+    )
+    run["can_upload"] = bool(run["has_video"] and run.get("status") != "running")
+    run["upload_label"] = (
+        "Re-upload"
+        if upload_status in ("uploaded", "failed")
+        else "Upload"
+    )
+
+    if upload_status == "uploading":
+        run["display_status"] = "uploading"
+    elif run["is_uploaded"]:
+        run["display_status"] = "uploaded"
+    elif upload_status == "failed" and run["has_video"]:
+        run["display_status"] = "upload-failed"
+    elif run.get("status") == "success" and not run["has_video"]:
         run["display_status"] = "missing"
     elif run.get("status") == "success" and run["has_video"]:
         run["display_status"] = "ready"
     else:
         run["display_status"] = run.get("status")
     return run
+
+
+def _upload_run_video(run_id: int) -> None:
+    run = store.get_run(run_id)
+    if not run:
+        return
+    try:
+        path = _safe_video_path(run)
+    except HTTPException as exc:
+        store.set_upload_status(run_id, "failed", upload_error=str(exc.detail))
+        store.append_step_log(run_id, "upload", f"Upload failed: {exc.detail}")
+        return
+
+    try:
+        country = get_country(str(run["country_code"]))
+    except ValueError as exc:
+        store.set_upload_status(run_id, "failed", upload_error=str(exc))
+        return
+
+    trends = _parse_json_field(run.get("trends_json")) or []
+    news = _parse_json_field(run.get("news_json")) or {}
+    if not isinstance(trends, list):
+        trends = []
+    if not isinstance(news, dict):
+        news = {}
+
+    from src.pipeline import _attempt_youtube_upload
+
+    _attempt_youtube_upload(
+        run_id,
+        str(path),
+        country,
+        trends,
+        news,
+        str(run.get("run_date") or local_run_date(country)),
+    )
 
 
 def _group_by_date(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -220,7 +292,10 @@ def _scheduled_run(country_code: str) -> None:
             return
         _running_countries.add(country_code)
     try:
-        run_country_pipeline(country_code, skip_upload=True)
+        run_country_pipeline(
+            country_code,
+            skip_upload=not _youtube_enabled(),
+        )
     except Exception:
         logger.exception("Scheduled run failed for %s", country_code)
     finally:
@@ -241,6 +316,10 @@ async def index(
     available_dates = store.list_run_dates()
     next_runs = get_next_run_times()
     has_running = any(r["status"] == "running" for r in runs) or stats.get("running", 0) > 0
+    has_uploading = (
+        any(r.get("upload_status") == "uploading" for r in runs)
+        or stats.get("uploading", 0) > 0
+    )
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -253,6 +332,8 @@ async def index(
             "filter_country": (country or "").upper(),
             "filter_date": date or "",
             "has_running": has_running,
+            "has_uploading": has_uploading,
+            "youtube_enabled": _youtube_enabled(),
         },
     )
 
@@ -308,6 +389,8 @@ async def api_delete_run(run_id: int) -> JSONResponse:
         raise HTTPException(status_code=404, detail="Run not found")
     if run.get("status") == "running":
         raise HTTPException(status_code=409, detail="Cannot delete a running job")
+    if (run.get("upload_status") or "") == "uploading":
+        raise HTTPException(status_code=409, detail="Cannot delete while uploading")
 
     deleted_paths = _delete_run_artifacts(run)
     store.delete_run(run_id)
@@ -315,6 +398,36 @@ async def api_delete_run(run_id: int) -> JSONResponse:
     return JSONResponse(
         {"ok": True, "run_id": run_id, "deleted_paths": deleted_paths}
     )
+
+
+@app.post("/api/runs/{run_id}/upload")
+async def api_upload_run(run_id: int, background_tasks: BackgroundTasks) -> JSONResponse:
+    run = store.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.get("status") == "running":
+        raise HTTPException(status_code=409, detail="Wait for generation to finish")
+    if not _video_exists(run):
+        raise HTTPException(status_code=400, detail="No local video to upload")
+    if (run.get("upload_status") or "") == "uploading":
+        raise HTTPException(status_code=409, detail="Upload already in progress")
+
+    with _upload_lock:
+        if run_id in _uploading_runs:
+            raise HTTPException(status_code=409, detail="Upload already in progress")
+        _uploading_runs.add(run_id)
+
+    store.set_upload_status(run_id, "uploading", upload_error=None)
+
+    def _bg() -> None:
+        try:
+            _upload_run_video(run_id)
+        finally:
+            with _upload_lock:
+                _uploading_runs.discard(run_id)
+
+    background_tasks.add_task(_bg)
+    return JSONResponse({"run_id": run_id, "status": "uploading"})
 
 
 @app.get("/api/countries")
@@ -367,7 +480,7 @@ async def api_trigger(
                     code,
                     trends_provider="mock" if mock else "http",
                     news_provider="mock" if mock else "google_news_rss",
-                    skip_upload=True,
+                    skip_upload=not _youtube_enabled(),
                     existing_run_id=rid,
                 )
             except Exception:
@@ -386,7 +499,7 @@ async def api_trigger(
             code,
             trends_provider="mock" if mock else "http",
             news_provider="mock" if mock else "google_news_rss",
-            skip_upload=True,
+            skip_upload=not _youtube_enabled(),
         )
     finally:
         with _running_lock:

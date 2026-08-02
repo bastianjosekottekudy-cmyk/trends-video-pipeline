@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from googleapiclient.discovery import build
@@ -14,6 +15,10 @@ from src.naming import build_video_title
 from src.youtube.auth import get_credentials
 
 logger = logging.getLogger(__name__)
+
+
+class YouTubeUploadError(RuntimeError):
+    """Raised when an upload cannot proceed or fails."""
 
 
 def _build_description(
@@ -38,6 +43,11 @@ def _build_description(
     return "\n".join(lines)
 
 
+def youtube_enabled() -> bool:
+    config = load_pipeline_config()
+    return bool(config.get("youtube", {}).get("enabled", False))
+
+
 def upload_video(
     video_path: str,
     country: Country,
@@ -46,13 +56,29 @@ def upload_video(
     run_date: str,
 ) -> str:
     if get_env("SKIP_YOUTUBE_UPLOAD", "false").lower() in ("true", "1", "yes"):
-        logger.info("Skipping YouTube upload (SKIP_YOUTUBE_UPLOAD=true)")
-        return "skipped"
+        raise YouTubeUploadError(
+            "YouTube upload skipped (SKIP_YOUTUBE_UPLOAD=true in .env)"
+        )
+
+    if not youtube_enabled():
+        raise YouTubeUploadError(
+            "YouTube upload is disabled (set youtube.enabled: true in config/pipeline.yaml)"
+        )
+
+    path = Path(video_path)
+    if not path.is_file():
+        raise YouTubeUploadError(f"Video file not found: {video_path}")
 
     config = load_pipeline_config()
     yt_cfg = config.get("youtube", {})
 
-    creds = get_credentials()
+    try:
+        creds = get_credentials()
+    except Exception as exc:
+        raise YouTubeUploadError(
+            f"YouTube auth failed. Run: python -m src.youtube.auth ({exc})"
+        ) from exc
+
     youtube = build("youtube", "v3", credentials=creds)
 
     title = build_video_title(country.name, run_date)
@@ -61,8 +87,8 @@ def upload_video(
 
     body = {
         "snippet": {
-            "title": title,
-            "description": description,
+            "title": title[:100],
+            "description": description[:5000],
             "tags": tags,
             "categoryId": str(yt_cfg.get("category_id", "25")),
         },
@@ -72,14 +98,20 @@ def upload_video(
         },
     }
 
-    media = MediaFileUpload(video_path, chunksize=256 * 1024, resumable=True)
+    media = MediaFileUpload(str(path), chunksize=256 * 1024, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            logger.info("Upload progress: %.1f%%", status.progress() * 100)
+    try:
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                logger.info("Upload progress: %.1f%%", status.progress() * 100)
+    except Exception as exc:
+        raise YouTubeUploadError(f"YouTube API upload failed: {exc}") from exc
+
+    if not response or not response.get("id"):
+        raise YouTubeUploadError("YouTube API returned no video id")
 
     video_id = response["id"]
     logger.info("Uploaded video: https://youtube.com/watch?v=%s", video_id)
@@ -89,32 +121,38 @@ def upload_video(
 def main() -> None:
     """Test upload with latest video: python -m src.youtube.uploader --country US"""
     import argparse
-    from pathlib import Path
+    import json
 
-    from src.config import OUTPUT_DIR, get_country
+    from src.config import OUTPUT_DIR, get_country, local_run_date
+    from src.naming import video_filename
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--country", required=True)
-    parser.add_argument("--date", default=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    parser.add_argument("--date", default=None)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
     country = get_country(args.country)
-    out_dir = OUTPUT_DIR / args.date / country.code.upper()
-    from src.naming import video_filename
-
-    video_path = out_dir / video_filename(country.name, args.date)
+    run_date = args.date or local_run_date(country)
+    out_dir = OUTPUT_DIR / run_date / country.code.upper()
+    video_path = out_dir / video_filename(country.name, run_date)
     if not video_path.exists():
-        mp4s = list(out_dir.glob("*.mp4"))
+        # Prefer newest per-run folder
+        run_dirs = sorted(out_dir.glob("run_*"), reverse=True)
+        mp4s: list[Path] = []
+        for rd in run_dirs:
+            mp4s.extend(rd.glob("*.mp4"))
+        mp4s.extend(out_dir.glob("*.mp4"))
         if not mp4s:
-            raise FileNotFoundError(f"No video at {video_path}")
+            raise FileNotFoundError(f"No video under {out_dir}")
         video_path = mp4s[0]
+        # Load trends/news from same folder when possible
+        out_dir = video_path.parent
 
-    import json
-
-    trends = json.loads((out_dir / "trends.json").read_text())["trends"]
-    news = json.loads((out_dir / "news.json").read_text())
-    upload_video(str(video_path), country, trends, news, args.date)
+    trends = json.loads((out_dir / "trends.json").read_text(encoding="utf-8"))["trends"]
+    news = json.loads((out_dir / "news.json").read_text(encoding="utf-8"))
+    video_id = upload_video(str(video_path), country, trends, news, run_date)
+    print(f"https://www.youtube.com/watch?v={video_id}")
 
 
 if __name__ == "__main__":

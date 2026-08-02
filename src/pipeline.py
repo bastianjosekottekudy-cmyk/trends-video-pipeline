@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from src.audio.tts import generate_narration
-from src.config import country_output_dir, get_country, load_pipeline_config, local_run_date
+from src.config import (
+    Country,
+    country_output_dir,
+    get_country,
+    load_pipeline_config,
+    local_run_date,
+)
 from src.db import store
 from src.images.fetcher import fetch_images_for_trends
 from src.naming import build_video_title
@@ -23,8 +29,46 @@ logger = logging.getLogger(__name__)
 
 
 def _youtube_enabled() -> bool:
-    config = load_pipeline_config()
-    return bool(config.get("youtube", {}).get("enabled", False))
+    from src.youtube.uploader import youtube_enabled
+
+    return youtube_enabled()
+
+
+def _attempt_youtube_upload(
+    run_id: int,
+    video_path: str,
+    country: Country,
+    trends: list[str],
+    news: dict[str, list[dict[str, Any]]],
+    run_date: str,
+) -> str | None:
+    """Upload without failing the local pipeline. Returns video id or None."""
+    from src.youtube.uploader import YouTubeUploadError, upload_video
+
+    store.set_upload_status(run_id, "uploading", upload_error=None)
+    store.append_step_log(run_id, "upload", "Uploading to YouTube")
+    try:
+        youtube_id = upload_video(video_path, country, trends, news, run_date)
+        store.set_upload_status(
+            run_id,
+            "uploaded",
+            youtube_video_id=youtube_id,
+            upload_error=None,
+        )
+        store.append_step_log(
+            run_id, "upload", f"Uploaded https://www.youtube.com/watch?v={youtube_id}"
+        )
+        return youtube_id
+    except YouTubeUploadError as exc:
+        logger.warning("YouTube upload failed for run %s: %s", run_id, exc)
+        store.set_upload_status(run_id, "failed", upload_error=str(exc))
+        store.append_step_log(run_id, "upload", f"Upload failed: {exc}")
+        return None
+    except Exception as exc:
+        logger.exception("Unexpected YouTube upload error for run %s", run_id)
+        store.set_upload_status(run_id, "failed", upload_error=str(exc))
+        store.append_step_log(run_id, "upload", f"Upload failed: {exc}")
+        return None
 
 
 def run_country_pipeline(
@@ -99,14 +143,14 @@ def run_country_pipeline(
         youtube_id = None
         should_upload = force_upload or (not skip_upload and _youtube_enabled())
         if should_upload:
-            from src.youtube.uploader import upload_video
-
-            store.append_step_log(run_id, "upload", "Uploading to YouTube")
-            youtube_id = upload_video(video_path, country, trends, news, run_date)
-            store.update_run(run_id, youtube_video_id=youtube_id)
+            youtube_id = _attempt_youtube_upload(
+                run_id, video_path, country, trends, news, run_date
+            )
         else:
             store.append_step_log(
-                run_id, "local", f"Saved as '{video_title}.mp4' (manual YouTube upload)"
+                run_id,
+                "local",
+                f"Saved as '{video_title}.mp4' — upload from dashboard or enable auto-upload",
             )
 
         manifest: dict[str, Any] = {
@@ -164,7 +208,7 @@ def main() -> None:
         run_date=args.date,
         trends_provider=trends_provider,
         news_provider=news_provider,
-        skip_upload=True,
+        skip_upload=not _youtube_enabled(),
         force_upload=args.upload,
     )
     print(f"Run {run_id} completed. Check output/ and dashboard at http://127.0.0.1:8080")

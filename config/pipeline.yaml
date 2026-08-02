@@ -33,9 +33,9 @@ script:
 images:
   providers: [wikimedia, openverse, news_og]
 
-# Automatic upload is future scope — videos are stored locally for manual upload.
+# Auto-upload after generate when secrets/token.json (or YOUTUBE_REFRESH_TOKEN) is set.
 youtube:
-  enabled: false
+  enabled: true
   category_id: "25"
   privacy: public
   made_for_kids: false

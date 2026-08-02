@@ -20,6 +20,12 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(
@@ -38,8 +44,23 @@ def init_db() -> None:
                 video_path TEXT,
                 youtube_video_id TEXT,
                 error_message TEXT,
-                steps_log TEXT
+                steps_log TEXT,
+                upload_status TEXT NOT NULL DEFAULT 'none',
+                upload_error TEXT
             )
+            """
+        )
+        _ensure_column(conn, "runs", "upload_status", "TEXT NOT NULL DEFAULT 'none'")
+        _ensure_column(conn, "runs", "upload_error", "TEXT")
+        # Backfill uploaded rows that only have youtube_video_id
+        conn.execute(
+            """
+            UPDATE runs
+            SET upload_status = 'uploaded'
+            WHERE youtube_video_id IS NOT NULL
+              AND youtube_video_id != ''
+              AND youtube_video_id != 'skipped'
+              AND (upload_status IS NULL OR upload_status = 'none' OR upload_status = '')
             """
         )
         conn.commit()
@@ -60,8 +81,11 @@ def create_run(country_code: str, country_name: str, run_date: str) -> int:
     with db() as conn:
         cur = conn.execute(
             """
-            INSERT INTO runs (country_code, country_name, run_date, status, started_at, steps_log)
-            VALUES (?, ?, ?, 'running', ?, '[]')
+            INSERT INTO runs (
+                country_code, country_name, run_date, status,
+                started_at, steps_log, upload_status
+            )
+            VALUES (?, ?, ?, 'running', ?, '[]', 'none')
             """,
             (country_code.upper(), country_name, run_date, now),
         )
@@ -103,32 +127,71 @@ def finish_run(run_id: int, status: str, error_message: str | None = None) -> No
     )
 
 
+def set_upload_status(
+    run_id: int,
+    upload_status: str,
+    *,
+    youtube_video_id: str | None = None,
+    upload_error: str | None = None,
+) -> None:
+    fields: dict[str, Any] = {
+        "upload_status": upload_status,
+        "upload_error": upload_error,
+    }
+    if youtube_video_id is not None:
+        fields["youtube_video_id"] = youtube_video_id
+    elif upload_status == "failed":
+        # keep existing youtube_video_id on failure of re-upload
+        pass
+    update_run(run_id, **fields)
+
+
 def fail_orphaned_runs(
     error_message: str = "Interrupted by app restart",
 ) -> list[int]:
-    """Mark any leftover 'running' rows as failed (process died mid-job)."""
+    """Mark leftover running jobs / uploads as failed after a process kill."""
     now = datetime.now(timezone.utc).isoformat()
+    failed_ids: list[int] = []
     with db() as conn:
         rows = conn.execute(
             "SELECT id FROM runs WHERE status = 'running'"
         ).fetchall()
         ids = [int(row["id"]) for row in rows]
-        if not ids:
-            return []
-        conn.execute(
-            """
-            UPDATE runs
-            SET status = 'failed',
-                finished_at = ?,
-                error_message = ?
-            WHERE status = 'running'
-            """,
-            (now, error_message),
-        )
-        for run_id in ids:
+        if ids:
+            conn.execute(
+                """
+                UPDATE runs
+                SET status = 'failed',
+                    finished_at = ?,
+                    error_message = ?
+                WHERE status = 'running'
+                """,
+                (now, error_message),
+            )
+            failed_ids.extend(ids)
+
+        upload_rows = conn.execute(
+            "SELECT id FROM runs WHERE upload_status = 'uploading'"
+        ).fetchall()
+        upload_ids = [int(row["id"]) for row in upload_rows]
+        if upload_ids:
+            conn.execute(
+                """
+                UPDATE runs
+                SET upload_status = 'failed',
+                    upload_error = ?
+                WHERE upload_status = 'uploading'
+                """,
+                (error_message,),
+            )
+            failed_ids.extend(upload_ids)
+
+        for run_id in sorted(set(failed_ids)):
             row = conn.execute(
                 "SELECT steps_log FROM runs WHERE id = ?", (run_id,)
             ).fetchone()
+            if not row:
+                continue
             log: list[dict[str, str]] = json.loads(row["steps_log"] or "[]")
             log.append(
                 {
@@ -141,7 +204,7 @@ def fail_orphaned_runs(
                 "UPDATE runs SET steps_log = ? WHERE id = ?",
                 (json.dumps(log), run_id),
             )
-    return ids
+    return sorted(set(failed_ids))
 
 
 def get_run(run_id: int) -> dict[str, Any] | None:
@@ -203,9 +266,13 @@ def count_runs_today() -> dict[str, int]:
         running = conn.execute(
             "SELECT COUNT(*) FROM runs WHERE status = 'running'", ()
         ).fetchone()[0]
+        uploading = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE upload_status = 'uploading'", ()
+        ).fetchone()[0]
     return {
         "today_total": total,
         "today_success": success,
         "today_failed": failed,
         "running": running,
+        "uploading": uploading,
     }

@@ -167,10 +167,21 @@ select {
 
 .badge-ready,
 .badge-success { background: #14532d; color: #4ade80; }
+.badge-uploaded { background: #0c4a6e; color: #7dd3fc; }
+.badge-uploading { background: #312e81; color: #c4b5fd; }
+.badge-upload-failed { background: #4c0519; color: #fb7185; }
 .badge-failed { background: #450a0a; color: #f87171; }
 .badge-missing { background: #3b1f0b; color: #fdba74; }
 .badge-running { background: #422006; color: #fbbf24; }
 .badge-pending { background: #1e293b; color: #94a3b8; }
+
+.btn-upload {
+  background: #b91c1c;
+}
+.btn-upload:hover { background: #991b1b; }
+
+.yt-link a { color: #7dd3fc; }
+.upload-error { color: #fb7185; }
 
 .btn {
   background: #2563eb;

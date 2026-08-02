@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -21,8 +22,14 @@ _URL_RE = re.compile(
     r"https?://\S+|www\.\S+",
     re.IGNORECASE,
 )
+# Google News titles often end with " - BBC", " | TMZ", or nbsp-separated source
 _SOURCE_TAIL_RE = re.compile(
-    r"\s*[\|\-–—]\s*[A-Za-z0-9][A-Za-z0-9 .&]{1,40}$",
+    r"(?:\s*[\|\-–—]\s*|\s{2,})"
+    r"[A-Za-z0-9][A-Za-z0-9 .,&/'!]{0,50}$"
+)
+_ATTR_CRUMB_RE = re.compile(
+    r"""\b(?:href|src|target|oc|rel)\s*=\s*["']?[^"'>\s]*["']?""",
+    re.IGNORECASE,
 )
 _OPENERS = (
     "Up next,",
@@ -37,16 +44,61 @@ _OPENERS = (
 
 
 def _strip_html(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text or "").strip()
+    cleaned = html.unescape(text or "")
+    cleaned = cleaned.replace("\xa0", " ").replace("\u200b", " ")
+    # Complete tags, then truncated/broken tags (common in RSS truncations)
+    cleaned = re.sub(r"<[^>]*>", " ", cleaned)
+    cleaned = re.sub(r"</?[a-zA-Z][^>]*>?", " ", cleaned)
+    cleaned = _ATTR_CRUMB_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"[<>]", " ", cleaned)
+    return cleaned.strip()
 
 
 def _clean_for_speech(text: str) -> str:
-    """Strip HTML, URLs, and source crumbs for spoken narration."""
+    """Strip HTML entities/tags, URLs, and publisher crumbs for spoken narration."""
     cleaned = _strip_html(text)
     cleaned = _URL_RE.sub(" ", cleaned)
-    cleaned = _SOURCE_TAIL_RE.sub("", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,;:-")
+    # TTS literally says "nbsp" if entities survived
+    cleaned = re.sub(r"\bnbsp\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"&[#a-zA-Z0-9]+;", " ", cleaned)
+    # Keep double spaces briefly so source tails after &nbsp;&nbsp; still match
+    cleaned = re.sub(r"[^\S\r\n]+", " ", cleaned)  # normalize runs of spaces
+    # Re-expand: publisher often after " - " or was separated by nbsp (now single space)
+    cleaned = re.sub(
+        r"\s+-\s+[A-Za-z0-9][A-Za-z0-9 .,&/'!]{0,50}$",
+        "",
+        cleaned,
+    ).strip()
+    cleaned = re.sub(
+        r"\s+\|\s+[A-Za-z0-9][A-Za-z0-9 .,&/'!]{0,50}$",
+        "",
+        cleaned,
+    ).strip()
+    # Short trailing outlet names after the headline (BBC, TMZ, WWE, etc.)
+    cleaned = re.sub(
+        r"\s+(?:BBC|TMZ|CNN|Reuters|AP News|WWE|ESPN|Forbes|Variety|"
+        r"Rolling Stone|Bleacher Report|Wrestling Inc\.?|Boxing News(?:\s+24/7)?|"
+        r"Push Square|Sky News|Guardian|NYTimes|New York Times|"
+        r"India Today|NDTV|Times of India|Hindustan Times|"
+        r"The Hindu|News18|Fox News|NBC News|CBS News|ABC News)\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    for _ in range(2):
+        cleaned = _SOURCE_TAIL_RE.sub("", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,;:-\"'")
     return cleaned.strip()
+
+
+def _is_speakable(text: str) -> bool:
+    """False for empty/link-junk leftovers after cleaning."""
+    if not text or len(text) < 12:
+        return False
+    if re.search(r"\b(href|http|www)\b", text, re.IGNORECASE):
+        return False
+    letters = sum(1 for ch in text if ch.isalpha())
+    return letters >= 8
 
 
 def _word_count(text: str) -> int:
@@ -118,13 +170,18 @@ def _fact_for_trend(
     if not headlines:
         return ""
     item = headlines[0]
-    summary = _clean_for_speech(item.get("summary", ""))[:180]
+    # Google News RSS summaries are often HTML link lists — prefer title
     headline = _clean_for_speech(item.get("title", ""))
-    if summary and not _overlaps(summary, keyword):
-        return summary
-    if headline and not _overlaps(headline, keyword):
+    summary = _clean_for_speech(item.get("summary", ""))[:180]
+    if _is_speakable(headline) and not _overlaps(headline, keyword):
         return headline
-    return summary or headline
+    if _is_speakable(summary) and not _overlaps(summary, keyword):
+        return summary
+    if _is_speakable(headline):
+        return headline
+    if _is_speakable(summary):
+        return summary
+    return ""
 
 
 def _template_segments(
@@ -193,6 +250,7 @@ def _build_prompt(
         "- One unique spoken beat per trend — do not restate the search query.",
         "- Do not repeat the same fact across trends.",
         "- Never include URLs, links, website names as links, or markdown.",
+        "- Never speak publisher/channel names (BBC, TMZ, etc.) or HTML like nbsp.",
         "- Do not say on-screen labels like 'what it means'.",
         "- Use contractions and varied transitions; sound human, not like a headline reader.",
         "- Short intro once, short outro once.",
