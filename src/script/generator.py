@@ -22,9 +22,10 @@ _URL_RE = re.compile(
     r"https?://\S+|www\.\S+",
     re.IGNORECASE,
 )
-# Google News titles often end with " - BBC", " | TMZ", or nbsp-separated source
+# Publisher tails like " - BBC" / " | TMZ" — MUST have whitespace around
+# the delimiter so we never chop hyphenated words (anti-government → anti).
 _SOURCE_TAIL_RE = re.compile(
-    r"(?:\s*[\|\-–—]\s*|\s{2,})"
+    r"(?:\s+[\|\-–—]\s+|\s{2,})"
     r"[A-Za-z0-9][A-Za-z0-9 .,&/'!]{0,50}$"
 )
 _ATTR_CRUMB_RE = re.compile(
@@ -87,7 +88,9 @@ def _clean_for_speech(text: str) -> str:
     )
     for _ in range(2):
         cleaned = _SOURCE_TAIL_RE.sub("", cleaned).strip()
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,;:-\"'")
+    # Normalize unicode dashes inside words for clearer TTS
+    cleaned = cleaned.replace("\u2011", "-").replace("\u2013", "-").replace("\u2014", "-")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,;:\"'")
     return cleaned.strip()
 
 

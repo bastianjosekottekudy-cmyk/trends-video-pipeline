@@ -59,6 +59,20 @@ def _load_segments(script_path: Path, output_dir: Path) -> list[dict[str, Any]]:
     return [{"id": "full", "text": text}] if text else []
 
 
+def _prepare_tts_text(text: str) -> str:
+    """
+    Normalize text for edge-tts.
+    Hyphenated compounds are spoken more reliably with a space
+    (anti-government → anti government) so synthesis doesn't stall/cut off.
+    """
+    import re
+
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"(?<=\w)[-–—](?=\w)", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 async def _generate_async(
     text: str,
     voice: str,
@@ -67,7 +81,8 @@ async def _generate_async(
 ) -> None:
     import edge_tts
 
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    speak = _prepare_tts_text(text)
+    communicate = edge_tts.Communicate(speak, voice, rate=rate)
     await communicate.save(str(output_path))
 
 
